@@ -226,15 +226,18 @@ int main(int argc, char **argv) {
   struct tablo* doubleSizeTabReversed = allocateTablo(doubleSize);
   copyTabAndReverseTab(&source, doubleSizeTab, doubleSizeTabReversed);
 
-  #pragma omp parallel sections
+  #pragma omp parallel
   {
-    #pragma omp section
+    #pragma omp parallel sections
     {
-      sumPrefix(doubleSizeTab, psum);
-    }
-    #pragma omp section
-    {
-      sumSuffix(doubleSizeTabReversed, ssum);
+      #pragma omp section
+      {
+        sumPrefix(doubleSizeTab, psum);
+      }
+      #pragma omp section
+      {
+        sumSuffix(doubleSizeTabReversed, ssum);
+      }
     }
   }
 
@@ -242,17 +245,8 @@ int main(int argc, char **argv) {
   struct tablo* pmax = allocateTablo(normalSize);
   copyTabSsumAndPsum(ssum, psum, doubleSizeTab, doubleSizeTabReversed);
 
-  #pragma omp parallel sections
-  {
-    #pragma omp section
-    {
-      sMax(doubleSizeTabReversed, smax);
-    }
-    #pragma omp section
-    {
-      pMax(doubleSizeTab, pmax);
-    }
-  }
+  sMax(doubleSizeTabReversed, smax);
+  pMax(doubleSizeTab, pmax);
 
   struct tablo* m = allocateTablo(normalSize);
   mFinal(m, pmax, ssum, smax, psum, &source);
