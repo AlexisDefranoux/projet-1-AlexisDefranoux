@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <omp.h>
 #include <math.h>
+#include <limits.h>
 
 struct tablo {
   int * tab;
@@ -23,46 +24,66 @@ struct tablo * allocateTablo(int size) {
   return tmp;
 }
 
-void montee(struct tablo* psum, struct tablo* destination, struct tablo* source) {
-  #pragma omp parallel for
-  for (int i = 0; i < normalSize; ++i)
-    destination->tab[normalSize + i] = source->tab[i];
+void freeTab(struct tablo* tmp){
+  free(tmp->tab);
+  free(tmp);
+}
 
+void copyTabAndReverseTab(struct tablo* source,struct tablo* doubleSizeTab, struct tablo* doubleSizeTabReversed){
+  #pragma omp parallel for
+  for (int i = 0; i < normalSize; ++i){
+    doubleSizeTab->tab[normalSize + i] = source->tab[i];
+    doubleSizeTabReversed->tab[i+normalSize] = source->tab[normalSize-i-1];
+  }
+}
+
+void copyTabSsumAndPsum(struct tablo* ssum, struct tablo* psum, struct tablo* doubleSizeTab, struct tablo* doubleSizeTabReversed){
+  #pragma omp parallel for
+  for (int i = 0; i < normalSize; ++i){
+    doubleSizeTab->tab[normalSize + i] = ssum->tab[i];
+    doubleSizeTabReversed->tab[i+normalSize] = psum->tab[normalSize-i-1];
+  }
+}
+
+void montee(struct tablo* psum, struct tablo* a) {
   m = log2(normalSize);
   for (int l = m-1; l >= 0; --l) {
-
     int init = pow(2, l);
     int end = (pow(2, l+1) -1);
-
     #pragma omp parallel for
     for (int j = init; j <= end; ++j)
-      destination->tab[j] = destination->tab[2*j] + destination->tab[2*j+1];
+      a->tab[j] = a->tab[2*j] + a->tab[2*j+1];
   }
 }
 
 void descente(struct tablo * a, struct tablo * b) {
-  b->tab[0] = 0;
   b->tab[1] = 0;
-
   for (int l = 1; l <= m; ++l) {
     int init = pow(2, l);
     int end = (pow(2, l+1) -1);
-
     #pragma omp parallel for
     for (int j = init; j <= end; ++j) {
-      if (j%2 == 0) b->tab[j] = b->tab[j/2];
-      else b->tab[j] = b->tab[j/2] + a->tab[j-1];
+      if (j%2 == 0) 
+        b->tab[j] = b->tab[j/2];
+      else 
+        b->tab[j] = b->tab[j/2] + a->tab[j-1];
     }
   }
 }
 
-void final(struct tablo* a, struct tablo* b, struct tablo* psum) {
-  int init = pow(2, m);
-  int end = (pow(2, m+1) -1);
-
+void finalPrefix(struct tablo* a, struct tablo* b, struct tablo* psum) {
   #pragma omp parallel for
-  for (int j = init; j <= end; ++j)
-      psum->tab[j-normalSize] = b->tab[j] + a->tab[j];
+  for (int j = normalSize; j < doubleSize; ++j)
+    psum->tab[j-normalSize] = b->tab[j] + a->tab[j];
+}
+
+void finalSuffix(struct tablo* a, struct tablo* b, struct tablo* ssum) {
+  int j = doubleSize-1;
+  #pragma omp parallel for
+  for (int i = 0; i < normalSize; ++i){
+    ssum->tab[i] = b->tab[j] + a->tab[j];
+    --j;
+  }
 }
 
 void parseFile(char *filePath, struct tablo * myList) {
@@ -93,43 +114,73 @@ void parseFile(char *filePath, struct tablo * myList) {
   fclose(file);
 }
 
-void sumPrefix(struct tablo* psum, struct tablo* source){
-  struct tablo* a = allocateTablo(doubleSize);
-  montee(psum, a, source);
-
+void sumPrefix(struct tablo* doubleSizeTab, struct tablo* psum){
+  montee(psum, doubleSizeTab);
   struct tablo* b = allocateTablo(doubleSize);
-  descente(a, b);
-  final(a,b, psum);
-  free(a->tab);
-  free(a);
-  free(b->tab);
-  free(b);
+  descente(doubleSizeTab, b);
+  finalPrefix(doubleSizeTab, b, psum);
+  freeTab(b);
 }
 
-void sumSuffix(struct tablo* ssum, struct tablo* source) {
-  ssum->tab[normalSize-1] = source->tab[normalSize-1];
-  for (int i = normalSize-2; i >= 0; --i)
-    ssum->tab[i] = source->tab[i] + ssum->tab[i+1];
+void sumSuffix(struct tablo* doubleSizeTabReversed, struct tablo* ssum) {
+  montee(ssum, doubleSizeTabReversed);
+  struct tablo* b = allocateTablo(doubleSize);
+  descente(doubleSizeTabReversed, b);
+  finalSuffix(doubleSizeTabReversed, b, ssum);
+  freeTab(b);
 }
 
-void sMax(struct tablo* smax, struct tablo* psum) {
-  smax->tab[normalSize-1] = psum->tab[normalSize-1];
-  for (int i = normalSize-2; i >= 0; --i){
-    if(smax->tab[i+1] < psum->tab[i])
-      smax->tab[i] = psum->tab[i];
-    else
-      smax->tab[i] = smax->tab[i+1];
+void monteeMax(struct tablo* psum, struct tablo* a) {
+  m = log2(normalSize);
+  for (int l = m-1; l >= 0; --l) {
+    int init = pow(2, l);
+    int end = (pow(2, l+1) -1);
+    #pragma omp parallel for
+    for (int j = init; j <= end; ++j)
+      a->tab[j] = fmax(a->tab[2*j], a->tab[2*j+1]);
   }
 }
 
-void pMax(struct tablo* pmax, struct tablo* ssum) {
-  pmax->tab[0] = ssum->tab[0];
-  for (int i = 1; i <= normalSize-1; ++i){
-    if(pmax->tab[i-1] < ssum->tab[i]) 
-      pmax->tab[i] = ssum->tab[i];
-    else 
-      pmax->tab[i] = pmax->tab[i-1];
+void descenteMax(struct tablo * a, struct tablo * b) {
+  b->tab[1] = INT_MIN;
+  for (int l = 1; l <= m; ++l) {
+    int init = pow(2, l);
+    int end = (pow(2, l+1) -1);
+    #pragma omp parallel for
+    for (int j = init; j <= end; ++j) {
+      if (j%2 == 0) 
+        b->tab[j] = b->tab[j/2];
+      else 
+        b->tab[j] = fmax(b->tab[j/2], a->tab[j-1]);
+    }
   }
+}
+
+void finalPmax(struct tablo* a, struct tablo* b, struct tablo* pmax) {
+  #pragma omp parallel for
+  for (int j = normalSize; j < doubleSize; ++j)
+    pmax->tab[j-normalSize] = fmax(b->tab[j], a->tab[j]);
+}
+
+void finalSmax(struct tablo* a, struct tablo* b, struct tablo* smax) {
+  for (int i = normalSize, j = normalSize - 1; i < doubleSize; ++i, --j)
+    smax->tab[j] = fmax(b->tab[i], a->tab[i]);
+}
+
+void pMax(struct tablo* doubleSizeTab, struct tablo* pmax) {
+  monteeMax(pmax, doubleSizeTab);
+  struct tablo* b = allocateTablo(doubleSize);
+  descenteMax(doubleSizeTab, b);
+  finalPmax(doubleSizeTab, b, pmax);
+  freeTab(doubleSizeTab); freeTab(b);
+}
+
+void sMax(struct tablo* doubleSizeTabReversed, struct tablo* smax) {
+  monteeMax(smax, doubleSizeTabReversed);
+  struct tablo* b = allocateTablo(doubleSize);
+  descenteMax(doubleSizeTabReversed, b);
+  finalSmax(doubleSizeTabReversed, b, smax);
+  freeTab(doubleSizeTabReversed); freeTab(b);
 }
 
 void mFinal(struct tablo* m, struct tablo* pmax, struct tablo* ssum, struct tablo* smax, struct tablo* psum, struct tablo* source) {
@@ -140,14 +191,7 @@ void mFinal(struct tablo* m, struct tablo* pmax, struct tablo* ssum, struct tabl
       (smax->tab[i] - psum->tab[i] + source->tab[i]) -
       source->tab[i];
 
-  free(pmax->tab);
-  free(pmax);
-  free(ssum->tab);
-  free(ssum);
-  free(smax->tab);
-  free(smax);
-  free(psum->tab);
-  free(psum);
+  freeTab(pmax); freeTab(ssum);freeTab(smax); freeTab(psum);
 }
 
 void findAndPrint(struct tablo* m, struct tablo* source){
@@ -166,12 +210,10 @@ void findAndPrint(struct tablo* m, struct tablo* source){
       end = normalSize-1;
 
   printf("%d ", max);
-  for (int i = start; i <= end; ++i){
+  for (int i = start; i <= end; ++i)
     printf("%d ", source->tab[i]);
-  }
 
-  free(m->tab);
-  free(m);
+  freeTab(m);
 }
 
 int main(int argc, char **argv) {
@@ -179,28 +221,41 @@ int main(int argc, char **argv) {
   parseFile(argv[1], &source);
 
   struct tablo* psum = allocateTablo(normalSize);
-  sumPrefix(psum, &source);
-
   struct tablo* ssum = allocateTablo(normalSize);
-  sumSuffix(ssum, &source);
+  struct tablo* doubleSizeTab = allocateTablo(doubleSize);
+  struct tablo* doubleSizeTabReversed = allocateTablo(doubleSize);
+  copyTabAndReverseTab(&source, doubleSizeTab, doubleSizeTabReversed);
 
-  struct tablo* smax = allocateTablo(normalSize);
-  struct tablo* pmax = allocateTablo(normalSize);
   #pragma omp parallel sections
   {
     #pragma omp section
     {
-      sMax(smax, psum);
+      sumPrefix(doubleSizeTab, psum);
     }
     #pragma omp section
     {
-      pMax(pmax, ssum);
+      sumSuffix(doubleSizeTabReversed, ssum);
+    }
+  }
+
+  struct tablo* smax = allocateTablo(normalSize);
+  struct tablo* pmax = allocateTablo(normalSize);
+  copyTabSsumAndPsum(ssum, psum, doubleSizeTab, doubleSizeTabReversed);
+
+  #pragma omp parallel sections
+  {
+    #pragma omp section
+    {
+      sMax(doubleSizeTabReversed, smax);
+    }
+    #pragma omp section
+    {
+      pMax(doubleSizeTab, pmax);
     }
   }
 
   struct tablo* m = allocateTablo(normalSize);
   mFinal(m, pmax, ssum, smax, psum, &source);
-
   findAndPrint(m, &source);
 
   return 0;
